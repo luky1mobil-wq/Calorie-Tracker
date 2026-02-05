@@ -3,18 +3,18 @@ import google.generativeai as genai
 from PIL import Image
 
 st.set_page_config(page_title="Nutri Tracker", page_icon="🥗")
-st.title("🥗 Nutriční Tracker (Gemini 2.0)")
+st.title("🥗 Nutriční Tracker (Lite)")
 
-# --- BEZPEČNOSTNÍ POJISTKA ---
-# Klíč se načte z Trezoru, takže v kódu není vidět a Google ho nezablokuje.
+# --- NAČTENÍ KLÍČE Z TREZORU ---
 try:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=API_KEY)
 except Exception:
     st.error("Chybí klíč v Secrets! Nastav ho v Manage app -> Settings -> Secrets.")
 
-# Používáme model 2.0 Flash, který ti fungoval v diagnostice
-model = genai.GenerativeModel('gemini-2.0-flash')
+# ZMĚNA: Použijeme "Lite" verzi, kterou máš v seznamu (screenshot 213327)
+# Je to nejbezpečnější volba proti chybám 404 i 429.
+model = genai.GenerativeModel('gemini-2.0-flash-lite')
 
 foto = st.camera_input("Vyfoť jídlo")
 
@@ -34,5 +34,4 @@ if foto:
             st.markdown("### 📊 Výsledky")
             st.markdown(response.text)
         except Exception as e:
-            st.error(f"Chyba: {e}")
             st.error(f"Chyba: {e}")
