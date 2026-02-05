@@ -10,8 +10,7 @@ st.title("🥗 Nutriční Tracker (Gemini 2.0)")
 API_KEY = "AIzaSyBVO_JlXa0oJ4PzR-3QrEF_eJxh9vqIk3I"
 genai.configure(api_key=API_KEY)
 
-# VÍTĚZNÝ MODEL Z DIAGNOSTIKY
-# Tohle je ten přesný název ze screenshotu, který bude fungovat
+# Model ověřený diagnostikou
 model = genai.GenerativeModel('gemini-2.0-flash')
 
 # Foťák
@@ -30,3 +29,9 @@ if foto:
         """
         
         try:
+            # Tady byly chybějící mezery - teď je to opraveno
+            response = model.generate_content([prompt, img])
+            st.markdown("### 📊 Výsledky")
+            st.markdown(response.text)
+        except Exception as e:
+            st.error(f"Chyba: {e}")
