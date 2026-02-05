@@ -12,7 +12,7 @@ st.write("Vyfoť jídlo a Gemini 3 Pro spočítá zbytek.")
 # API Klíč
 API_KEY = "AIzaSyBVO_JlXa0oJ4PzR-3QrEF_eJxh9vqIk3I"
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-3-pro-preview')
+model = genai.GenerativeModel('gemini-1.5-pro')
 
 # Foťák přímo v aplikaci
 foto = st.camera_input("Vyfotit jídlo")
