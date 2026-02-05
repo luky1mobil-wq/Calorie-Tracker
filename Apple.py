@@ -1,27 +1,31 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image
 
-st.set_page_config(page_title="Nutri Tracker")
-st.title("🥗 Kalorický Tracker")
+st.title("🕵️ Diagnostika Modelů")
 
-# Nastavení klíče
-genai.configure(api_key="AIzaSyBVO_JlXa0oJ4PzR-3QrEF_eJxh9vqIk3I")
+# Tvůj klíč
+API_KEY = "AIzaSyBVO_JlXa0oJ4PzR-3QrEF_eJxh9vqIk3I"
+genai.configure(api_key=API_KEY)
 
-# Použijeme model 1.5-flash, který je nejmíň náchylný na chyby s kvótou
-model = genai.GenerativeModel('gemini-1.5-flash')
+st.write("Zjišťuji dostupné modely pro tvůj API klíč...")
 
-foto = st.camera_input("Vyfoť jídlo")
-
-if foto:
-    img = Image.open(foto)
-    st.image(img, use_container_width=True)
+try:
+    # Získáme seznam všech modelů, které tvůj klíč vidí
+    models = list(genai.list_models())
     
-    with st.spinner('Počítám...'):
-        prompt = "Analyzuj fotku a vytvoř tabulku v češtině: Potravina, Hmotnost, Energie (kcal), Bílkoviny, Sacharidy, Cukry, Tuky, Sůl, Vláknina. Na konci dej součet."
-        try:
-            # Přímé odeslání obrázku
-            response = model.generate_content([prompt, img])
-            st.markdown(response.text)
-        except Exception as e:
-            st.error(f"Chyba: {e}")
+    found_any = False
+    for m in models:
+        # Hledáme jen ty, co umí generovat obsah (ne embeddingy)
+        if 'generateContent' in m.supported_generation_methods:
+            st.success(f"✅ NALEZEN: **{m.name}**")
+            found_any = True
+            
+    if not found_any:
+        st.error("Žádné použitelné modely nenalezeny. Problém s klíčem?")
+        
+except Exception as e:
+    st.error(f"Kritická chyba: {e}")
+    st.info("Tip: Pokud vidíš chybu 'module not found', Streamlit ignoruje tvůj requirements.txt")
+
+st.write("---")
+st.caption("Pošli screenshot tohoto seznamu a vybereme ten, který svítí zeleně.")
