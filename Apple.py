@@ -7,7 +7,7 @@ st.set_page_config(page_title="Nutri Tracker", page_icon="🥗")
 st.title("🥗 Nutriční Tracker (Gemini 2.0)")
 
 # Tvůj API klíč
-API_KEY = "AIzaSyBVO_JlXa0oJ4PzR-3QrEF_eJxh9vqIk3I"
+API_KEY = "AIzaSyB61O7zbSLQeN9On0r62-pvHvw9BW0WLVo"
 genai.configure(api_key=API_KEY)
 
 # Model ověřený diagnostikou
