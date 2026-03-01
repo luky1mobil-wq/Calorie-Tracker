@@ -179,6 +179,204 @@ with st.sidebar:
         t_cal = int(tdee - 400)
         t_prot = int(profile["weight"] * 2.2)
 
+    # Výpočet pro tuky a sacharidy
+    t_fat = int(profile["weight"] * 1.0) # 1g tuku na kg váhy
+    rem_cal = t_cal - (t_prot * 4) - (t_fat * 9) # Zbytek kalorií
+    t_carb = int(max(rem_cal / 4, 0)) # Zbytek připadne na sacharidy
+
+df_food = load_csv(files["food"])
+df_water = load_csv(files["water"])
+df_weight = load_csv(files["weight"])
+
+c_cal = df_food[df_food["Datum"]==today]["Kalorie"].sum() if not df_food.empty else 0
+c_water = df_water[df_water["Datum"]==today]["Objem"].sum() if not df_water.empty else 0
+last_weight = df_weight.iloc[-1]["Vaha"] if not df_weight.empty else profile["weight"]
+
+if 'burned' not in st.session_state: 
+    st.session_state.burned = 0
+
+# ==============================================================================
+# 5. DASHBOARD 
+# ==============================================================================
+c_date, c_prog = st.columns([1, 2])
+c_date.markdown(f"**📅 {today}**")
+prog_val = min(c_cal / t_cal, 1.0) if t_cal > 0 else 0
+c_prog.progress(prog_val)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown(f"""
+    <div class="dashboard-card">
+        <div class="card-title">🍽️ PŘÍJEM</div>
+        <div class="card-value">{int(c_cal)}</div>
+        <div class="card-sub">z {t_cal} kcal</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    with st.container():
+        st.markdown(f"""
+        <div class="dashboard-card" style="padding-bottom: 5px;">
+            <div class="card-title">🔥 POHYB</div>
+            <div class="card-value">{st.session_state.burned}</div>
+            <div class="card-sub">kcal spáleno</div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("➕ Aktivita (+50)", key="btn_burn"):
+            st.session_state.burned += 50
+            st.rerun()
+
+with col1:
+    st.markdown(f"""
+    <div class="dashboard-card">
+        <div class="card-title">💧 VODA</div>
+        <div class="card-value">{float(c_water)/1000:.1
+    if total <= 0: total = 1
+    pct = min(int((val / total) * 100), 100)
+    return f"""
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 20px;">
+        <div style="width: 80px; height: 80px; border-radius: 50%; background: conic-gradient({color} {pct}%, #333 {pct}%); position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px rgba(0,0,0,0.5);">
+            <div style="position: absolute; width: 64px; height: 64px; background-color: #1E1E1E; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <span style="font-size: 16px; font-weight: bold; color: white; line-height: 1;">{int(val)}g</span>
+            </div>
+        </div>
+        <span style="color: #AAAAAA; font-size: 12px; font-weight: bold; margin-top: 8px; text-transform: uppercase;">{label}</span>
+        <span style="color: #777; font-size: 11px;">z {int(total)} g</span>
+    </div>
+    """
+
+# --- API KLÍČ A MODEL ---
+try:
+    API_KEY = st.secrets["GOOGLE_API_KEY"]
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel("gemini-flash-latest", generation_config={"response_mime_type": "application/json"})
+except Exception as e:
+    st.error(f"⚠️ CHYBÍ API KLÍČ V SECRETS! Ujisti se, že máš správně nastavený tajný klíč. Chyba: {e}")
+    st.stop()
+
+# ==============================================================================
+# 2. FILE MANAGEMENT
+# ==============================================================================
+USERS_FILE = "users_list.json"
+
+def get_filenames(username):
+    clean = str(username).strip().replace(" ", "_")
+    return {
+        "food": f"data_{clean}_food.csv",
+        "weight": f"data_{clean}_weight.csv",
+        "profile": f"data_{clean}_profile.json",
+        "water": f"data_{clean}_water.csv"
+    }
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f: return json.load(f)
+        except: return ["Lukáš"]
+    return ["Lukáš"]
+
+def add_user(name):
+    users = load_users()
+    if name and name not in users:
+        users.append(name)
+        with open(USERS_FILE, "w", encoding="utf-8") as f: json.dump(users, f)
+        return True
+    return False
+
+def load_csv(filename): 
+    try:
+        return pd.read_csv(filename) if os.path.exists(filename) else pd.DataFrame()
+    except:
+        return pd.DataFrame()
+
+def save_csv(df, filename): 
+    if not df.empty:
+        df.to_csv(filename, index=False)
+
+def load_profile(filename):
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f: return json.load(f)
+        except: pass
+    return {"weight": 80.0, "height": 184, "age": 14, "gender": "Muž", "goal": "Body Recomp", "activity": 1.55}
+
+def save_profile(data, filename):
+    with open(filename, "w", encoding="utf-8") as f: json.dump(data, f)
+
+def clean_json_response(raw_text):
+    text = raw_text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(json)?", "", text)
+        text = re.sub(r"```$", "", text).strip()
+    return json.loads(text)
+
+# ==============================================================================
+# 3. AUTO-LOGIN
+# ==============================================================================
+qp = st.query_params
+if 'user' not in st.session_state: 
+    st.session_state.user = qp.get("user", None)
+
+if not st.session_state.user:
+    st.title("🔐 Login")
+    u = st.selectbox("Kdo jsi?", load_users())
+    if st.button("Vstoupit", type="primary"):
+        st.session_state.user = u
+        st.query_params["user"] = u
+        st.rerun()
+    
+    st.divider()
+    new = st.text_input("Nový uživatel")
+    if st.button("Vytvořit") and add_user(new):
+        st.success("OK")
+        st.rerun()
+    st.stop()
+
+# ==============================================================================
+# 4. HLAVNÍ LOGIKA A VÝPOČTY MAKER
+# ==============================================================================
+user = st.session_state.user
+files = get_filenames(user)
+profile = load_profile(files["profile"])
+today = datetime.date.today().strftime("%Y-%m-%d")
+
+with st.sidebar:
+    st.title(f"👤 {user}")
+    st.caption("Tvůj odkaz: " + f"?user={user}")
+    if st.button("Odhlásit"): 
+        st.session_state.user = None
+        st.query_params.clear()
+        st.rerun()
+    
+    st.divider()
+    with st.expander("⚙️ Nastavení"):
+        w = st.number_input("Váha", 0.0, 200.0, float(profile.get("weight", 80.0)))
+        
+        goal_options = ["Body Recomp", "Objem", "Hubnutí"]
+        current_goal = profile.get("goal", "Body Recomp")
+        goal_index = goal_options.index(current_goal) if current_goal in goal_options else 0
+        goal = st.selectbox("Cíl", goal_options, index=goal_index)
+        
+        if st.button("Uložit"):
+            profile.update({"weight": w, "goal": goal})
+            save_profile(profile, files["profile"])
+            st.rerun()
+
+    # VÝPOČTY LIMITŮ
+    bmr = (10 * profile["weight"]) + (6.25 * profile.get("height", 184)) - (5 * profile.get("age", 14)) + 5
+    tdee = bmr * profile.get("activity", 1.55)
+    
+    if "Recomp" in profile["goal"]: 
+        t_cal = int(tdee + 100)
+        t_prot = int(profile["weight"] * 2.2)
+    elif "Objem" in profile["goal"]: 
+        t_cal = int(tdee + 300)
+        t_prot = int(profile["weight"] * 2.0)
+    else: 
+        t_cal = int(tdee - 400)
+        t_prot = int(profile["weight"] * 2.2)
+
     # Přidán výpočet pro tuky a sacharidy
     t_fat = int(profile["weight"] * 1.0) # 1g tuku na kg váhy
     rem_cal = t_cal - (t_prot * 4) - (t_fat * 9) # Zbytek kalorií
