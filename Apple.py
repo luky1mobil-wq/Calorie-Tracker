@@ -21,15 +21,14 @@ st.markdown("""
     .stButton>button { border-radius: 15px; background-color: #2E2E2E; color: white; border: 1px solid #444; font-weight: bold; width: 100%; }
     .stButton>button:hover { border-color: #4CAF50; color: #4CAF50; }
     .stProgress > div > div > div > div { background-color: #4CAF50; }
+    .stDataFrame { font-size: 14px; }
     </style>
 """, unsafe_allow_html=True)
 
-# VYLEPŠENÁ FUNKCE NA KOLEČKA (Přesně jako KT)
 def draw_donut(val, total, color, label, unit=""):
     if total <= 0: total = 1
     pct = min(int((val / total) * 100), 100)
     
-    # Varování: Překročení kalorií zbarví kolečko do červena
     if label == "PŘÍJEM" and val > total:
         color = "#F44336"
         pct = 100
@@ -105,11 +104,14 @@ def save_profile(data, filename):
     with open(filename, "w", encoding="utf-8") as f: json.dump(data, f)
 
 def clean_json_response(raw_text):
-    text = raw_text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(json)?", "", text)
-        text = re.sub(r"```$", "", text).strip()
-    return json.loads(text)
+    # Agresivnější čištění - najde první '{' a poslední '}'
+    start = raw_text.find('{')
+    end = raw_text.rfind('}')
+    if start != -1 and end != -1:
+        clean_text = raw_text[start:end+1]
+        return json.loads(clean_text)
+    else:
+        raise ValueError("JSON nebyl v odpovědi nalezen.")
 
 # ==============================================================================
 # 3. AUTO-LOGIN
@@ -123,7 +125,8 @@ if not st.session_state.user:
     u = st.selectbox("Kdo jsi?", load_users())
     if st.button("Vstoupit", type="primary"):
         st.session_state.user = u
-        st.query_params["user"] = u
+        if "user" not in st.query_params or st.query_params["user"] != u:
+            st.query_params["user"] = u
         st.rerun()
     st.stop()
 
@@ -167,10 +170,7 @@ with st.sidebar:
 
     t_fat = int(profile["weight"] * 1.0) 
     t_carb = int(max((t_cal - (t_prot * 4) - (t_fat * 9)) / 4, 0))
-    
-    # Cíl vody: 30 ml na 1 kg váhy
     t_water = int(profile["weight"] * 30)
-    # Cíl pohybu (pro zobrazení v kolečku - zatím pevně 500)
     t_burn = 500 
 
 df_food = load_csv(files["food"])
@@ -188,7 +188,6 @@ if 'burned' not in st.session_state: st.session_state.burned = 0
 # ==============================================================================
 st.markdown(f"### 📅 {today}")
 
-# 4 sloupce pro hlavní metriky
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
@@ -216,8 +215,9 @@ with c3:
 
 with c4:
     st.markdown(draw_donut(last_weight, profile.get("goal_weight", last_weight), "#9C27B0", "VÁHA", "kg"), unsafe_allow_html=True)
-    w_input = st.number_input("Zapsat váhu:", 0.0, 150.0, float(last_weight), label_visibility="collapsed")
-    if w_input != last_weight:
+    # Zabezpečené uložení váhy pomocí tlačítka
+    w_input = st.number_input("Zapsat váhu:", 0.0, 150.0, float(last_weight), label_visibility="collapsed", key="dash_w_input")
+    if st.button("💾 Uložit"):
         new_row = pd.DataFrame([{"Datum": today, "Vaha": w_input}])
         if not df_weight.empty: df_weight = df_weight[df_weight["Datum"] != today]
         df_weight = pd.concat([df_weight, new_row], ignore_index=True) if not df_weight.empty else new_row
@@ -229,17 +229,19 @@ with c4:
 st.divider()
 
 # ==============================================================================
-# 6. PŘIDÁVÁNÍ JÍDLA
+# 6. PŘIDÁVÁNÍ JÍDLA S KONTEXTEM
 # ==============================================================================
 st.subheader("📸 Přidat jídlo")
 
 cam = st.camera_input("Vyfoť jídlo", label_visibility="collapsed")
 if cam:
     st.image(cam, width=150)
+    extra_info = st.text_input("Doplňující info k fotce (např. 'je to 200g', 'vypil jsem k tomu mléko'):", key="extra_cam")
+    
     if st.button("Analyzovat FOTO", type="primary", key="ana_cam"):
         with st.spinner("AI analyzuje..."):
             try:
-                prompt = "Analyzuj jídlo na fotce. Vrať striktně čistý JSON: {\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}"
+                prompt = f"Analyzuj jídlo na fotce. Zohledni toto doplňující info od uživatele: '{extra_info}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
                 res = model.generate_content([prompt, Image.open(cam)])
                 d = clean_json_response(res.text)
                 
@@ -251,7 +253,7 @@ if cam:
             except Exception as e: 
                 st.error(f"PŘESNÁ CHYBA: {e}")
 
-with st.expander("✍️ Zapsat textem"):
+with st.expander("✍️ Zapsat pouze textem"):
     txt = st.text_input("Co jsi jedl?")
     if st.button("Zapsat"):
         with st.spinner("AI analyzuje..."):
@@ -268,9 +270,9 @@ with st.expander("✍️ Zapsat textem"):
                 st.error(f"PŘESNÁ CHYBA: {e}")
 
 # ==============================================================================
-# 7. MAKRÁ A HISTORIE 
+# 7. MAKRÁ A HISTORIE (DETAILNÍ TABULKA)
 # ==============================================================================
-st.subheader("📊 Denní Makra")
+st.subheader("📊 Denní Makra a Historie")
 df_t = df_food[df_food["Datum"]==today] if not df_food.empty else pd.DataFrame()
 
 c_prot = df_t['Bílkoviny'].sum() if not df_t.empty else 0
@@ -283,7 +285,7 @@ with m2: st.markdown(draw_donut(c_carb, t_carb, "#FFC107", "SACHARIDY", "g"), un
 with m3: st.markdown(draw_donut(c_fat, t_fat, "#F44336", "TUKY", "g"), unsafe_allow_html=True) 
 
 if not df_t.empty:
-    st.dataframe(df_t[["Čas", "Jídlo", "Kalorie"]].iloc[::-1], use_container_width=True, hide_index=True)
+    st.dataframe(df_t[["Čas", "Jídlo", "Kalorie", "Bílkoviny", "Sacharidy", "Tuky"]].iloc[::-1], use_container_width=True, hide_index=True)
     if st.button("🗑️ Smazat poslední jídlo z dneška"):
         df_food = df_food.drop(df_food[df_food['Datum'] == today].index[-1])
         save_csv(df_food, files["food"])
