@@ -32,14 +32,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- API KLÍČ A MODEL ---
+# --- API KLÍČ A MODEL (FLASH LATEST PRO MAXIMÁLNÍ RYCHLOST A LIMITY) ---
 try:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=API_KEY)
-    # Nový model podle e-mailu od Googlu
-    model = genai.GenerativeModel("gemini-3.1-pro-preview", generation_config={"response_mime_type": "application/json"})
+    model = genai.GenerativeModel("gemini-flash-latest", generation_config={"response_mime_type": "application/json"})
 except Exception as e:
-    st.error(f"⚠️ CHYBÍ API KLÍČ V SECRETS! Ujisti se, že máš soubor .streamlit/secrets.toml. Chyba: {e}")
+    st.error(f"⚠️ CHYBÍ API KLÍČ V SECRETS! Ujisti se, že máš správně nastavený klíč ve Streamlit nastavení. Chyba: {e}")
     st.stop()
 
 # ==============================================================================
@@ -248,7 +247,7 @@ cam = st.camera_input("Vyfoť jídlo", label_visibility="collapsed")
 if cam:
     st.image(cam, width=150)
     if st.button("🚀 Analyzovat FOTO", type="primary", key="ana_cam"):
-        with st.spinner("Gemini 3.1 analyzuje..."):
+        with st.spinner("AI analyzuje fotku..."):
             try:
                 prompt = "Analyzuj jídlo na fotce. Vrať striktně čistý JSON bez markdownu a formátování: {\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}"
                 res = model.generate_content([prompt, Image.open(cam)])
@@ -260,12 +259,12 @@ if cam:
                 st.success(f"Přidáno: {d['nazev']}")
                 st.rerun()
             except Exception as e: 
-                st.error(f"Chyba při čtení dat z AI: {e}")
+                st.error(f"PŘESNÁ CHYBA: {e}")
 
 with st.expander("✍️ Nebo zapsat textem"):
     txt = st.text_input("Co jsi jedl?")
     if st.button("Zapsat"):
-         with st.spinner("Gemini 3.1 analyzuje..."):
+         with st.spinner("AI analyzuje text..."):
             try:
                 res = model.generate_content(f"Analyzuj toto jídlo: '{txt}'. Vrať striktně čistý JSON bez formátování: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}")
                 d = clean_json_response(res.text)
@@ -276,7 +275,7 @@ with st.expander("✍️ Nebo zapsat textem"):
                 st.success(f"Přidáno: {d['nazev']}")
                 st.rerun()
             except Exception as e: 
-                st.error(f"Chyba při čtení dat z AI: {e}")
+                st.error(f"PŘESNÁ CHYBA: {e}")
 
 # ==============================================================================
 # 7. HISTORIE & MAKRA
