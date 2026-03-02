@@ -78,8 +78,9 @@ def load_csv(f):
         return df
     except: return pd.DataFrame()
 
+# OPRAVA 1: Uloží soubor vždycky, i když je tabulka prázdná (aby se jídlo fakt smazalo)
 def save_csv(df, f): 
-    if not df.empty: df.to_csv(f, index=False)
+    df.to_csv(f, index=False)
 
 def load_profile(f):
     if os.path.exists(f):
@@ -153,7 +154,6 @@ with st.sidebar:
             save_profile(profile, files["profile"])
             st.rerun()
 
-    # VÝPOČTY
     bmr = (10 * profile["weight"]) + (6.25 * profile.get("height", 184)) - (5 * profile.get("age", 14)) + 5
     tdee = bmr * profile.get("activity", 1.55)
     
@@ -186,7 +186,6 @@ if 'burned' not in st.session_state: st.session_state.burned = 0
 # ==============================================================================
 tab_dnes, tab_trendy, tab_hist = st.tabs(["🏠 Dnešek", "📈 Trendy", "📜 Historie"])
 
-# ----------------- TAB 1: DNEŠEK -----------------
 with tab_dnes:
     c_hlavicka1, c_hlavicka2 = st.columns([1, 1])
     c_hlavicka1.markdown(f"### 📅 {today}")
@@ -212,26 +211,32 @@ with tab_dnes:
 
     st.divider()
     
-    # VYLEPŠENÉ ZADÁVÁNÍ JÍDLA (Až 2 fotky naráz)
-    st.subheader("📸 Přidat jídlo (Až 2 fotky naráz)")
-    uploaded_files = st.file_uploader("Vyber nebo vyfoť (jídlo + tabulka s hodnotami)", accept_multiple_files=True, type=['jpg','png','jpeg'])
+    # OPRAVA 2: Dva oddělené foťáky pro mobil
+    st.subheader("📸 Přidat jídlo (Můžeš přidat i tabulku)")
     
-    if uploaded_files:
-        images = []
-        c_imgs = st.columns(len(uploaded_files[:2])) # Zobrazí max 2 fotky vedle sebe
-        for i, f in enumerate(uploaded_files[:2]):
-            img = Image.open(f)
-            c_imgs[i].image(img, width=150)
-            images.append(img)
+    cam_jidlo = st.camera_input("1. Vyfoť jídlo na talíři", key="cam_jidlo")
+    cam_tabulka = st.camera_input("2. Vyfoť nutriční tabulku (volitelné)", key="cam_tabulka")
+    
+    if cam_jidlo or cam_tabulka:
+        images_to_process = []
+        c_show1, c_show2 = st.columns(2)
+        
+        if cam_jidlo:
+            img1 = Image.open(cam_jidlo)
+            c_show1.image(img1, caption="Jídlo", use_container_width=True)
+            images_to_process.append(img1)
+        if cam_tabulka:
+            img2 = Image.open(cam_tabulka)
+            c_show2.image(img2, caption="Tabulka", use_container_width=True)
+            images_to_process.append(img2)
             
-        e_info = st.text_input("Doplňující info (např. 'je to 200g', 'vypil jsem k tomu mléko'):", key="e_cam")
+        e_info = st.text_input("Doplňující info k fotkám (např. 'je to 200g'):", key="e_cam")
+        
         if st.button("🚀 Analyzovat FOTO", type="primary"):
-            with st.spinner("AI analyzuje fotky a tabulku..."):
+            with st.spinner("AI analyzuje fotky..."):
                 try:
-                    prompt = f"Analyzuj jídlo na fotkách. Pokud je jedna z fotek nutriční tabulka, řiď se primárně podle ní! Zohledni info od uživatele: '{e_info}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
-                    # Pošleme prompt a všechny nahrané fotky naráz
-                    request_content = [prompt] + images 
-                    res = model.generate_content(request_content)
+                    prompt = f"Analyzuj jídlo na fotkách. Pokud je jedna z fotek nutriční tabulka, řiď se primárně podle ní a gramáže! Zohledni info od uživatele: '{e_info}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
+                    res = model.generate_content([prompt] + images_to_process)
                     d = clean_json(res.text)
                     
                     rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
@@ -248,7 +253,6 @@ with tab_dnes:
                     df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
                 except Exception as e: st.error(f"CHYBA: {e}")
 
-    # MAKRA A KATEGORIE
     st.divider()
     m1, m2, m3 = st.columns(3)
     with m1: st.markdown(draw_donut(c_prot, t_prot, "#2196F3", "BÍLKOVINY", "g"), unsafe_allow_html=True) 
@@ -263,7 +267,7 @@ with tab_dnes:
                 st.markdown(f"**{kat}** ({df_k['Kalorie'].sum()} kcal)")
                 st.dataframe(df_k[["Čas", "Jídlo", "Kalorie", "Bílkoviny", "Sacharidy", "Tuky"]], use_container_width=True, hide_index=True)
         
-        # OPRAVENÉ BEZPEČNÉ MAZÁNÍ POSLEDNÍHO JÍDLA
+        # Smazání je teď na 100% spolehlivé
         if st.button("🗑️ Smazat poslední záznam z dneška", key="del_last_safe"):
             todays_indices = df_food[df_food['Datum'] == today].index
             if len(todays_indices) > 0:
@@ -271,7 +275,6 @@ with tab_dnes:
                 save_csv(df_food, files["food"])
                 st.rerun()
 
-    # AI TRENÉR
     st.divider()
     if st.button("🤖 AI Trenér - Zhodnotit den", type="primary"):
         with st.spinner("Trenér píše..."):
@@ -279,7 +282,6 @@ with tab_dnes:
             odpoved = text_model.generate_content(prompt).text
             st.info(odpoved)
 
-# ----------------- TAB 2: TRENDY -----------------
 with tab_trendy:
     st.subheader("Vývoj váhy")
     if not df_weight.empty and len(df_weight) > 1:
@@ -293,7 +295,6 @@ with tab_trendy:
         c_c = alt.Chart(df_cal_trend.tail(14)).mark_bar(color="#4CAF50").encode(x='Datum', y='Kalorie')
         st.altair_chart(c_c, use_container_width=True)
 
-# ----------------- TAB 3: HISTORIE -----------------
 with tab_hist:
     st.subheader("Kompletní záznamy")
     if not df_food.empty: st.dataframe(df_food.iloc[::-1], use_container_width=True, hide_index=True)
