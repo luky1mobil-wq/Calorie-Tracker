@@ -22,6 +22,7 @@ st.markdown("""
     .stButton>button:hover { border-color: #4CAF50; color: #4CAF50; }
     .stProgress > div > div > div > div { background-color: #4CAF50; }
     .streak-box { background-color: #FF9800; color: #121212; padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 14px; display: inline-block; }
+    .stDataFrame { font-size: 14px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -56,7 +57,7 @@ try:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=API_KEY)
     model = genai.GenerativeModel("gemini-flash-latest", generation_config={"response_mime_type": "application/json"})
-    text_model = genai.GenerativeModel("gemini-flash-latest") # Pro trenéra
+    text_model = genai.GenerativeModel("gemini-flash-latest")
 except Exception as e:
     st.error(f"CHYBÍ API KLÍČ V SECRETS! Chyba: {e}")
     st.stop()
@@ -73,7 +74,6 @@ def get_filenames(user):
 def load_csv(f): 
     try: 
         df = pd.read_csv(f)
-        # Ošetření pro starší soubory, kde nebyla kategorie
         if "Kategorie" not in df.columns and not df.empty: df["Kategorie"] = "Ostatní"
         return df
     except: return pd.DataFrame()
@@ -128,7 +128,8 @@ if not st.session_state.user:
     u = st.selectbox("Kdo jsi?", users)
     if st.button("Vstoupit"):
         st.session_state.user = u
-        st.query_params["user"] = u
+        if "user" not in st.query_params or st.query_params["user"] != u:
+            st.query_params["user"] = u
         st.rerun()
     st.stop()
 
@@ -211,22 +212,33 @@ with tab_dnes:
 
     st.divider()
     
-    # ZADÁVÁNÍ JÍDLA
-    st.subheader("📸 Přidat jídlo")
-    cam = st.camera_input("Vyfoť jídlo", label_visibility="collapsed")
-    if cam:
-        st.image(cam, width=150)
-        e_info = st.text_input("Doplňující info k fotce:", key="e_cam")
-        if st.button("Analyzovat FOTO", type="primary"):
-            with st.spinner("AI analyzuje..."):
+    # VYLEPŠENÉ ZADÁVÁNÍ JÍDLA (Až 2 fotky naráz)
+    st.subheader("📸 Přidat jídlo (Až 2 fotky naráz)")
+    uploaded_files = st.file_uploader("Vyber nebo vyfoť (jídlo + tabulka s hodnotami)", accept_multiple_files=True, type=['jpg','png','jpeg'])
+    
+    if uploaded_files:
+        images = []
+        c_imgs = st.columns(len(uploaded_files[:2])) # Zobrazí max 2 fotky vedle sebe
+        for i, f in enumerate(uploaded_files[:2]):
+            img = Image.open(f)
+            c_imgs[i].image(img, width=150)
+            images.append(img)
+            
+        e_info = st.text_input("Doplňující info (např. 'je to 200g', 'vypil jsem k tomu mléko'):", key="e_cam")
+        if st.button("🚀 Analyzovat FOTO", type="primary"):
+            with st.spinner("AI analyzuje fotky a tabulku..."):
                 try:
-                    p = f"Analyzuj jídlo. Info: '{e_info}'. Čistý JSON: {{\"nazev\": \"N\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
-                    d = clean_json(model.generate_content([p, Image.open(cam)]).text)
+                    prompt = f"Analyzuj jídlo na fotkách. Pokud je jedna z fotek nutriční tabulka, řiď se primárně podle ní! Zohledni info od uživatele: '{e_info}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
+                    # Pošleme prompt a všechny nahrané fotky naráz
+                    request_content = [prompt] + images 
+                    res = model.generate_content(request_content)
+                    d = clean_json(res.text)
+                    
                     rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
                     df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
                 except Exception as e: st.error(f"CHYBA: {e}")
 
-    with st.expander("✍️ Zapsat textem"):
+    with st.expander("✍️ Zapsat pouze textem"):
         txt = st.text_input("Co jsi jedl?")
         if st.button("Zapsat text"):
             with st.spinner("AI počítá..."):
@@ -250,8 +262,14 @@ with tab_dnes:
             if not df_k.empty:
                 st.markdown(f"**{kat}** ({df_k['Kalorie'].sum()} kcal)")
                 st.dataframe(df_k[["Čas", "Jídlo", "Kalorie", "Bílkoviny", "Sacharidy", "Tuky"]], use_container_width=True, hide_index=True)
-        if st.button("🗑️ Smazat poslední záznam z dneška"):
-            df_food = df_food.drop(df_food[df_food['Datum'] == today].index[-1]); save_csv(df_food, files["food"]); st.rerun()
+        
+        # OPRAVENÉ BEZPEČNÉ MAZÁNÍ POSLEDNÍHO JÍDLA
+        if st.button("🗑️ Smazat poslední záznam z dneška", key="del_last_safe"):
+            todays_indices = df_food[df_food['Datum'] == today].index
+            if len(todays_indices) > 0:
+                df_food = df_food.drop(todays_indices[-1])
+                save_csv(df_food, files["food"])
+                st.rerun()
 
     # AI TRENÉR
     st.divider()
