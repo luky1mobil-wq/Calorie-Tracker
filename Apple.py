@@ -26,6 +26,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Nastavení přesného českého času (UTC + 1 hodina)
+now_cz = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+today = now_cz.strftime("%Y-%m-%d")
+current_time_str = now_cz.strftime("%H:%M")
+
 def draw_donut(val, total, color, label, unit=""):
     if total <= 0: total = 1
     pct = min(int((val / total) * 100), 100)
@@ -46,7 +51,7 @@ def draw_donut(val, total, color, label, unit=""):
     """
 
 def get_meal_category():
-    hour = datetime.datetime.now().hour
+    hour = now_cz.hour
     if 5 <= hour < 10: return "Snídaně"
     elif 10 <= hour < 14: return "Oběd"
     elif 14 <= hour < 18: return "Svačina"
@@ -99,8 +104,8 @@ def clean_json(text):
 def calc_streak(df_f):
     if df_f.empty: return 0
     dates = sorted(df_f['Datum'].unique(), reverse=True)
-    today_str = datetime.date.today().strftime("%Y-%m-%d")
-    yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    today_str = today
+    yesterday_str = (now_cz - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     
     streak = 0
     current_check = today_str
@@ -136,7 +141,6 @@ if not st.session_state.user:
 user = st.session_state.user
 files = get_filenames(user)
 profile = load_profile(files["profile"])
-today = datetime.date.today().strftime("%Y-%m-%d")
 
 with st.sidebar:
     st.title(f"{user}")
@@ -212,15 +216,14 @@ with tab_dnes:
 
     st.divider()
     
-    # --- VYLEPŠENÉ ZADÁVÁNÍ FOTEK (Záložky pro Galerii a Kameru) ---
+    # ZADÁVÁNÍ FOTEK
     st.subheader("📸 Přidat jídlo")
+    st.caption("💡 TIP: Pro lepší ostrost a zoom vyfoť věci normálně foťákem v mobilu a sem je rovnou nahraj.")
     
     tab_galerie, tab_kamera = st.tabs(["📂 Nahrát z Galerie", "📷 Vyfotit rovnou"])
     
     with tab_galerie:
-        # Přidány všechny možné mobilní formáty fotek + key, aby si to aplikace pamatovala
         uploaded_files = st.file_uploader("Vyber fotky (jídlo + tabulka s hodnotami)", accept_multiple_files=True, type=['jpg','png','jpeg','webp','heic','heif'], key="file_up_galerie")
-        
         if uploaded_files:
             images = []
             c_imgs = st.columns(len(uploaded_files[:2])) 
@@ -237,7 +240,7 @@ with tab_dnes:
                         res = model.generate_content([prompt] + images)
                         d = clean_json(res.text)
                         
-                        rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                        rec = pd.DataFrame([{"Datum": today, "Čas": current_time_str, "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
                         df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
                     except Exception as e: st.error(f"CHYBA: {e}")
 
@@ -253,7 +256,7 @@ with tab_dnes:
                         res = model.generate_content([prompt, Image.open(cam_in)])
                         d = clean_json(res.text)
                         
-                        rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                        rec = pd.DataFrame([{"Datum": today, "Čas": current_time_str, "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
                         df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
                     except Exception as e: st.error(f"CHYBA: {e}")
 
@@ -263,7 +266,7 @@ with tab_dnes:
             with st.spinner("AI počítá..."):
                 try:
                     d = clean_json(model.generate_content(f"Analyzuj: '{txt}'. Čistý JSON: {{\"nazev\": \"N\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}").text)
-                    rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                    rec = pd.DataFrame([{"Datum": today, "Čas": current_time_str, "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
                     df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
                 except Exception as e: st.error(f"CHYBA: {e}")
 
@@ -289,11 +292,12 @@ with tab_dnes:
                 save_csv(df_food, files["food"])
                 st.rerun()
 
-    # AI TRENÉR
+    # VYLEPŠENÝ AI TRENÉR S ČASEM
     st.divider()
-    if st.button("🤖 AI Trenér - Zhodnotit den", type="primary"):
+    if st.button("🤖 AI Trenér - Zhodnotit makra a poradit jídlo", type="primary"):
         with st.spinner("Trenér píše..."):
-            prompt = f"Jsem uživatel, cíl: {profile['goal']}. Mám {c_cal}/{t_cal} kcal, bílkoviny {c_prot}/{t_prot}g. Napiš mi úderné, povzbuzující zhodnocení (max 3 věty) a napiš mi konkrétní tip co si dát nebo nedat na večer. Odpovídej česky a buď upřímný, nepoučuj."
+            meal_cat = get_meal_category()
+            prompt = f"Jsem uživatel, cíl: {profile['goal']}. Aktuálně mám snězeno {c_cal}/{t_cal} kcal a bílkoviny {c_prot}/{t_prot}g. Právě teď je {current_time_str} hodin ({meal_cat}). Napiš mi stručné, úderné zhodnocení (max 2 věty). Vzhledem k tomu, že je {current_time_str}, dej mi JEDEN konkrétní tip na to, co si mám teď dát za jídlo, abych se vešel do maker. Odpovídej česky, stručně, narovinu a jako trenér, nepoučuj mě."
             odpoved = text_model.generate_content(prompt).text
             st.info(odpoved)
 
