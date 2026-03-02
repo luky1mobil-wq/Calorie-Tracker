@@ -11,24 +11,23 @@ import re
 # ==============================================================================
 # 1. DESIGN A KONFIGURACE
 # ==============================================================================
-st.set_page_config(page_title="NutriApp Pro", page_icon="💪", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="NutriApp Ultimate", page_icon="🔥", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
     .stApp { background-color: #121212; }
     #MainMenu, footer, header {visibility: hidden;}
     .block-container {padding-top: 1rem; padding-bottom: 3rem;}
-    .stButton>button { border-radius: 15px; background-color: #2E2E2E; color: white; border: 1px solid #444; font-weight: bold; width: 100%; }
+    .stButton>button { border-radius: 12px; background-color: #2E2E2E; color: white; border: 1px solid #444; font-weight: bold; width: 100%; }
     .stButton>button:hover { border-color: #4CAF50; color: #4CAF50; }
     .stProgress > div > div > div > div { background-color: #4CAF50; }
-    .stDataFrame { font-size: 14px; }
+    .streak-box { background-color: #FF9800; color: #121212; padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 14px; display: inline-block; }
     </style>
 """, unsafe_allow_html=True)
 
 def draw_donut(val, total, color, label, unit=""):
     if total <= 0: total = 1
     pct = min(int((val / total) * 100), 100)
-    
     if label == "PŘÍJEM" and val > total:
         color = "#F44336"
         pct = 100
@@ -45,11 +44,19 @@ def draw_donut(val, total, color, label, unit=""):
     </div>
     """
 
+def get_meal_category():
+    hour = datetime.datetime.now().hour
+    if 5 <= hour < 10: return "Snídaně"
+    elif 10 <= hour < 14: return "Oběd"
+    elif 14 <= hour < 18: return "Svačina"
+    else: return "Večeře"
+
 # --- API KLÍČ A MODEL ---
 try:
     API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=API_KEY)
     model = genai.GenerativeModel("gemini-flash-latest", generation_config={"response_mime_type": "application/json"})
+    text_model = genai.GenerativeModel("gemini-flash-latest") # Pro trenéra
 except Exception as e:
     st.error(f"CHYBÍ API KLÍČ V SECRETS! Chyba: {e}")
     st.stop()
@@ -59,80 +66,72 @@ except Exception as e:
 # ==============================================================================
 USERS_FILE = "users_list.json"
 
-def get_filenames(username):
-    clean = str(username).strip().replace(" ", "_")
-    return {
-        "food": f"data_{clean}_food.csv",
-        "weight": f"data_{clean}_weight.csv",
-        "profile": f"data_{clean}_profile.json",
-        "water": f"data_{clean}_water.csv"
-    }
+def get_filenames(user):
+    c = str(user).strip().replace(" ", "_")
+    return {"food": f"data_{c}_food.csv", "weight": f"data_{c}_weight.csv", "profile": f"data_{c}_profile.json", "water": f"data_{c}_water.csv"}
 
-def load_users():
-    if os.path.exists(USERS_FILE):
+def load_csv(f): 
+    try: 
+        df = pd.read_csv(f)
+        # Ošetření pro starší soubory, kde nebyla kategorie
+        if "Kategorie" not in df.columns and not df.empty: df["Kategorie"] = "Ostatní"
+        return df
+    except: return pd.DataFrame()
+
+def save_csv(df, f): 
+    if not df.empty: df.to_csv(f, index=False)
+
+def load_profile(f):
+    if os.path.exists(f):
         try:
-            with open(USERS_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return ["Lukáš"]
-    return ["Lukáš"]
-
-def add_user(name):
-    users = load_users()
-    if name and name not in users:
-        users.append(name)
-        with open(USERS_FILE, "w", encoding="utf-8") as f: json.dump(users, f)
-        return True
-    return False
-
-def load_csv(filename): 
-    try:
-        return pd.read_csv(filename) if os.path.exists(filename) else pd.DataFrame()
-    except:
-        return pd.DataFrame()
-
-def save_csv(df, filename): 
-    if not df.empty:
-        df.to_csv(filename, index=False)
-
-def load_profile(filename):
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f: return json.load(f)
+            with open(f, "r", encoding="utf-8") as file: return json.load(file)
         except: pass
     return {"weight": 80.0, "goal_weight": 80.0, "height": 184, "age": 14, "gender": "Muž", "goal": "Body Recomp", "activity": 1.55}
 
-def save_profile(data, filename):
-    with open(filename, "w", encoding="utf-8") as f: json.dump(data, f)
+def save_profile(data, f):
+    with open(f, "w", encoding="utf-8") as file: json.dump(data, file)
 
-def clean_json_response(raw_text):
-    # Agresivnější čištění - najde první '{' a poslední '}'
-    start = raw_text.find('{')
-    end = raw_text.rfind('}')
-    if start != -1 and end != -1:
-        clean_text = raw_text[start:end+1]
-        return json.loads(clean_text)
-    else:
-        raise ValueError("JSON nebyl v odpovědi nalezen.")
+def clean_json(text):
+    start, end = text.find('{'), text.rfind('}')
+    if start != -1 and end != -1: return json.loads(text[start:end+1])
+    raise ValueError("JSON nenalezen.")
+
+def calc_streak(df_f):
+    if df_f.empty: return 0
+    dates = sorted(df_f['Datum'].unique(), reverse=True)
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    streak = 0
+    current_check = today_str
+    
+    if dates and dates[0] != today_str:
+        if dates[0] == yesterday_str: current_check = yesterday_str
+        else: return 0
+
+    for d in dates:
+        if d == current_check:
+            streak += 1
+            current_check = (datetime.datetime.strptime(d, "%Y-%m-%d") - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        else: break
+    return streak
 
 # ==============================================================================
-# 3. AUTO-LOGIN
+# 3. AUTO-LOGIN & SETUP
 # ==============================================================================
 qp = st.query_params
-if 'user' not in st.session_state: 
-    st.session_state.user = qp.get("user", None)
+if 'user' not in st.session_state: st.session_state.user = qp.get("user", None)
 
 if not st.session_state.user:
     st.title("Login")
-    u = st.selectbox("Kdo jsi?", load_users())
-    if st.button("Vstoupit", type="primary"):
+    users = ["Lukáš"] if not os.path.exists(USERS_FILE) else json.load(open(USERS_FILE, "r", encoding="utf-8"))
+    u = st.selectbox("Kdo jsi?", users)
+    if st.button("Vstoupit"):
         st.session_state.user = u
-        if "user" not in st.query_params or st.query_params["user"] != u:
-            st.query_params["user"] = u
+        st.query_params["user"] = u
         st.rerun()
     st.stop()
 
-# ==============================================================================
-# 4. HLAVNÍ LOGIKA A VÝPOČTY
-# ==============================================================================
 user = st.session_state.user
 files = get_filenames(user)
 profile = load_profile(files["profile"])
@@ -140,27 +139,20 @@ today = datetime.date.today().strftime("%Y-%m-%d")
 
 with st.sidebar:
     st.title(f"{user}")
-    if st.button("Odhlásit"): 
-        st.session_state.user = None
-        st.query_params.clear()
-        st.rerun()
-    
+    if st.button("Odhlásit"): st.session_state.user = None; st.query_params.clear(); st.rerun()
     st.divider()
     with st.expander("Nastavení & Cíle"):
         w = st.number_input("Aktuální váha (kg)", 0.0, 200.0, float(profile.get("weight", 80.0)))
         gw = st.number_input("Cílová váha (kg)", 0.0, 200.0, float(profile.get("goal_weight", w)))
-        
-        goal_options = ["Body Recomp", "Objem", "Hubnutí"]
-        current_goal = profile.get("goal", "Body Recomp")
-        goal_index = goal_options.index(current_goal) if current_goal in goal_options else 0
-        goal = st.selectbox("Směr", goal_options, index=goal_index)
-        
+        g_opts = ["Body Recomp", "Objem", "Hubnutí"]
+        g_idx = g_opts.index(profile.get("goal", "Body Recomp")) if profile.get("goal") in g_opts else 0
+        goal = st.selectbox("Směr", g_opts, index=g_idx)
         if st.button("Uložit profil"):
             profile.update({"weight": w, "goal_weight": gw, "goal": goal})
             save_profile(profile, files["profile"])
             st.rerun()
 
-    # VÝPOČTY CÍLŮ
+    # VÝPOČTY
     bmr = (10 * profile["weight"]) + (6.25 * profile.get("height", 184)) - (5 * profile.get("age", 14)) + 5
     tdee = bmr * profile.get("activity", 1.55)
     
@@ -177,116 +169,114 @@ df_food = load_csv(files["food"])
 df_water = load_csv(files["water"])
 df_weight = load_csv(files["weight"])
 
-c_cal = df_food[df_food["Datum"]==today]["Kalorie"].sum() if not df_food.empty else 0
+streak_count = calc_streak(df_food)
+df_t = df_food[df_food["Datum"]==today] if not df_food.empty else pd.DataFrame()
+c_cal = df_t["Kalorie"].sum() if not df_t.empty else 0
+c_prot = df_t['Bílkoviny'].sum() if not df_t.empty else 0
+c_carb = df_t['Sacharidy'].sum() if not df_t.empty else 0
+c_fat = df_t['Tuky'].sum() if not df_t.empty else 0
 c_water = df_water[df_water["Datum"]==today]["Objem"].sum() if not df_water.empty else 0
 last_weight = df_weight.iloc[-1]["Vaha"] if not df_weight.empty else profile["weight"]
 
 if 'burned' not in st.session_state: st.session_state.burned = 0
 
 # ==============================================================================
-# 5. DASHBOARD (KOLEČKA VŠUDE)
+# 4. TABS: DNEŠEK | TRENDY | HISTORIE
 # ==============================================================================
-st.markdown(f"### 📅 {today}")
+tab_dnes, tab_trendy, tab_hist = st.tabs(["🏠 Dnešek", "📈 Trendy", "📜 Historie"])
 
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    st.markdown(draw_donut(c_cal, t_cal, "#4CAF50", "PŘÍJEM", "kcal"), unsafe_allow_html=True)
+# ----------------- TAB 1: DNEŠEK -----------------
+with tab_dnes:
+    c_hlavicka1, c_hlavicka2 = st.columns([1, 1])
+    c_hlavicka1.markdown(f"### 📅 {today}")
+    c_hlavicka2.markdown(f"<div style='text-align: right;'><span class='streak-box'>🔥 Jedeš {streak_count} dní!</span></div>", unsafe_allow_html=True)
     
-with c2:
-    st.markdown(draw_donut(st.session_state.burned, t_burn, "#FF9800", "POHYB", "kcal"), unsafe_allow_html=True)
-    if st.button("🔥 +50 kcal"):
-        st.session_state.burned += 50
-        st.rerun()
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.markdown(draw_donut(c_cal, t_cal, "#4CAF50", "PŘÍJEM", "kcal"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(draw_donut(st.session_state.burned, t_burn, "#FF9800", "POHYB", "kcal"), unsafe_allow_html=True)
+        if st.button("🔥 +50", key="b1"): st.session_state.burned += 50; st.rerun()
+    with c3:
+        st.markdown(draw_donut(c_water, t_water, "#2196F3", "VODA", "ml"), unsafe_allow_html=True)
+        if st.button("💧 +250", key="w1"):
+            df_water = pd.concat([df_water, pd.DataFrame([{"Datum": today, "Objem": 250}])], ignore_index=True)
+            save_csv(df_water, files["water"]); st.rerun()
+    with c4:
+        st.markdown(draw_donut(last_weight, profile.get("goal_weight", last_weight), "#9C27B0", "VÁHA", "kg"), unsafe_allow_html=True)
+        w_in = st.number_input("Váha", 0.0, 150.0, float(last_weight), label_visibility="collapsed")
+        if st.button("💾", key="w_s"):
+            if not df_weight.empty: df_weight = df_weight[df_weight["Datum"] != today]
+            df_weight = pd.concat([df_weight, pd.DataFrame([{"Datum": today, "Vaha": w_in}])], ignore_index=True)
+            save_csv(df_weight, files["weight"]); profile["weight"] = w_in; save_profile(profile, files["profile"]); st.rerun()
 
-with c3:
-    st.markdown(draw_donut(c_water, t_water, "#2196F3", "VODA", "ml"), unsafe_allow_html=True)
-    w1, w2 = st.columns(2)
-    if w1.button("💧 250"):
-        new_w = pd.DataFrame([{"Datum": today, "Objem": 250}])
-        df_water = pd.concat([df_water, new_w], ignore_index=True) if not df_water.empty else new_w
-        save_csv(df_water, files["water"])
-        st.rerun()
-    if w2.button("💧 500"):
-        new_w = pd.DataFrame([{"Datum": today, "Objem": 500}])
-        df_water = pd.concat([df_water, new_w], ignore_index=True) if not df_water.empty else new_w
-        save_csv(df_water, files["water"])
-        st.rerun()
-
-with c4:
-    st.markdown(draw_donut(last_weight, profile.get("goal_weight", last_weight), "#9C27B0", "VÁHA", "kg"), unsafe_allow_html=True)
-    # Zabezpečené uložení váhy pomocí tlačítka
-    w_input = st.number_input("Zapsat váhu:", 0.0, 150.0, float(last_weight), label_visibility="collapsed", key="dash_w_input")
-    if st.button("💾 Uložit"):
-        new_row = pd.DataFrame([{"Datum": today, "Vaha": w_input}])
-        if not df_weight.empty: df_weight = df_weight[df_weight["Datum"] != today]
-        df_weight = pd.concat([df_weight, new_row], ignore_index=True) if not df_weight.empty else new_row
-        save_csv(df_weight, files["weight"])
-        profile["weight"] = w_input
-        save_profile(profile, files["profile"])
-        st.rerun()
-
-st.divider()
-
-# ==============================================================================
-# 6. PŘIDÁVÁNÍ JÍDLA S KONTEXTEM
-# ==============================================================================
-st.subheader("📸 Přidat jídlo")
-
-cam = st.camera_input("Vyfoť jídlo", label_visibility="collapsed")
-if cam:
-    st.image(cam, width=150)
-    extra_info = st.text_input("Doplňující info k fotce (např. 'je to 200g', 'vypil jsem k tomu mléko'):", key="extra_cam")
+    st.divider()
     
-    if st.button("Analyzovat FOTO", type="primary", key="ana_cam"):
-        with st.spinner("AI analyzuje..."):
-            try:
-                prompt = f"Analyzuj jídlo na fotce. Zohledni toto doplňující info od uživatele: '{extra_info}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
-                res = model.generate_content([prompt, Image.open(cam)])
-                d = clean_json_response(res.text)
-                
-                rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
-                df_food = pd.concat([df_food, rec], ignore_index=True) if not df_food.empty else rec
-                save_csv(df_food, files["food"])
-                st.success(f"Přidáno: {d['nazev']}")
-                st.rerun()
-            except Exception as e: 
-                st.error(f"PŘESNÁ CHYBA: {e}")
+    # ZADÁVÁNÍ JÍDLA
+    st.subheader("📸 Přidat jídlo")
+    cam = st.camera_input("Vyfoť jídlo", label_visibility="collapsed")
+    if cam:
+        st.image(cam, width=150)
+        e_info = st.text_input("Doplňující info k fotce:", key="e_cam")
+        if st.button("Analyzovat FOTO", type="primary"):
+            with st.spinner("AI analyzuje..."):
+                try:
+                    p = f"Analyzuj jídlo. Info: '{e_info}'. Čistý JSON: {{\"nazev\": \"N\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
+                    d = clean_json(model.generate_content([p, Image.open(cam)]).text)
+                    rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                    df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
+                except Exception as e: st.error(f"CHYBA: {e}")
 
-with st.expander("✍️ Zapsat pouze textem"):
-    txt = st.text_input("Co jsi jedl?")
-    if st.button("Zapsat"):
-        with st.spinner("AI analyzuje..."):
-            try:
-                res = model.generate_content(f"Analyzuj: '{txt}'. Vrať čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}")
-                d = clean_json_response(res.text)
-                
-                rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
-                df_food = pd.concat([df_food, rec], ignore_index=True) if not df_food.empty else rec
-                save_csv(df_food, files["food"])
-                st.success(f"Přidáno: {d['nazev']}")
-                st.rerun()
-            except Exception as e: 
-                st.error(f"PŘESNÁ CHYBA: {e}")
+    with st.expander("✍️ Zapsat textem"):
+        txt = st.text_input("Co jsi jedl?")
+        if st.button("Zapsat text"):
+            with st.spinner("AI počítá..."):
+                try:
+                    d = clean_json(model.generate_content(f"Analyzuj: '{txt}'. Čistý JSON: {{\"nazev\": \"N\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}").text)
+                    rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                    df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
+                except Exception as e: st.error(f"CHYBA: {e}")
 
-# ==============================================================================
-# 7. MAKRÁ A HISTORIE (DETAILNÍ TABULKA)
-# ==============================================================================
-st.subheader("📊 Denní Makra a Historie")
-df_t = df_food[df_food["Datum"]==today] if not df_food.empty else pd.DataFrame()
+    # MAKRA A KATEGORIE
+    st.divider()
+    m1, m2, m3 = st.columns(3)
+    with m1: st.markdown(draw_donut(c_prot, t_prot, "#2196F3", "BÍLKOVINY", "g"), unsafe_allow_html=True) 
+    with m2: st.markdown(draw_donut(c_carb, t_carb, "#FFC107", "SACHARIDY", "g"), unsafe_allow_html=True) 
+    with m3: st.markdown(draw_donut(c_fat, t_fat, "#F44336", "TUKY", "g"), unsafe_allow_html=True) 
+    
+    if not df_t.empty:
+        st.write("### Dnešní jídla")
+        for kat in ["Snídaně", "Oběd", "Svačina", "Večeře", "Ostatní"]:
+            df_k = df_t[df_t.get("Kategorie", "Ostatní") == kat]
+            if not df_k.empty:
+                st.markdown(f"**{kat}** ({df_k['Kalorie'].sum()} kcal)")
+                st.dataframe(df_k[["Čas", "Jídlo", "Kalorie", "Bílkoviny", "Sacharidy", "Tuky"]], use_container_width=True, hide_index=True)
+        if st.button("🗑️ Smazat poslední záznam z dneška"):
+            df_food = df_food.drop(df_food[df_food['Datum'] == today].index[-1]); save_csv(df_food, files["food"]); st.rerun()
 
-c_prot = df_t['Bílkoviny'].sum() if not df_t.empty else 0
-c_carb = df_t['Sacharidy'].sum() if not df_t.empty else 0
-c_fat = df_t['Tuky'].sum() if not df_t.empty else 0
+    # AI TRENÉR
+    st.divider()
+    if st.button("🤖 AI Trenér - Zhodnotit den", type="primary"):
+        with st.spinner("Trenér píše..."):
+            prompt = f"Jsem uživatel, cíl: {profile['goal']}. Mám {c_cal}/{t_cal} kcal, bílkoviny {c_prot}/{t_prot}g. Napiš mi úderné, povzbuzující zhodnocení (max 3 věty) a napiš mi konkrétní tip co si dát nebo nedat na večer. Odpovídej česky a buď upřímný, nepoučuj."
+            odpoved = text_model.generate_content(prompt).text
+            st.info(odpoved)
 
-m1, m2, m3 = st.columns(3)
-with m1: st.markdown(draw_donut(c_prot, t_prot, "#2196F3", "BÍLKOVINY", "g"), unsafe_allow_html=True) 
-with m2: st.markdown(draw_donut(c_carb, t_carb, "#FFC107", "SACHARIDY", "g"), unsafe_allow_html=True) 
-with m3: st.markdown(draw_donut(c_fat, t_fat, "#F44336", "TUKY", "g"), unsafe_allow_html=True) 
+# ----------------- TAB 2: TRENDY -----------------
+with tab_trendy:
+    st.subheader("Vývoj váhy")
+    if not df_weight.empty and len(df_weight) > 1:
+        c_w = alt.Chart(df_weight).mark_line(point=True, color="#9C27B0").encode(x='Datum', y=alt.Y('Vaha', scale=alt.Scale(zero=False)))
+        st.altair_chart(c_w, use_container_width=True)
+    else: st.write("Zatím málo dat o váze.")
+    
+    st.subheader("Příjem Kalorií (poslední dny)")
+    if not df_food.empty:
+        df_cal_trend = df_food.groupby('Datum')['Kalorie'].sum().reset_index()
+        c_c = alt.Chart(df_cal_trend.tail(14)).mark_bar(color="#4CAF50").encode(x='Datum', y='Kalorie')
+        st.altair_chart(c_c, use_container_width=True)
 
-if not df_t.empty:
-    st.dataframe(df_t[["Čas", "Jídlo", "Kalorie", "Bílkoviny", "Sacharidy", "Tuky"]].iloc[::-1], use_container_width=True, hide_index=True)
-    if st.button("🗑️ Smazat poslední jídlo z dneška"):
-        df_food = df_food.drop(df_food[df_food['Datum'] == today].index[-1])
-        save_csv(df_food, files["food"])
-        st.rerun()
+# ----------------- TAB 3: HISTORIE -----------------
+with tab_hist:
+    st.subheader("Kompletní záznamy")
+    if not df_food.empty: st.dataframe(df_food.iloc[::-1], use_container_width=True, hide_index=True)
+    else: st.write("Zatím žádná data.")
