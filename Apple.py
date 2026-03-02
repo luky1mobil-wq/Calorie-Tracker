@@ -212,41 +212,54 @@ with tab_dnes:
 
     st.divider()
     
-    # NOVÉ ZADÁVÁNÍ FOTEK - Samostatná tlačítka
+    # --- VYLEPŠENÉ ZADÁVÁNÍ FOTEK (Záložky pro Galerii a Kameru) ---
     st.subheader("📸 Přidat jídlo")
-    st.caption("💡 TIP: Pro lepší ostrost a zoom vyfoť věci normálně foťákem v mobilu a sem je rovnou nahraj.")
     
-    f1, f2 = st.columns(2)
-    with f1:
-        img_food = st.file_uploader("1️⃣ Fotka jídla", type=['jpg','png','jpeg'])
-    with f2:
-        img_table = st.file_uploader("2️⃣ Tabulka (volitelné)", type=['jpg','png','jpeg'])
+    tab_galerie, tab_kamera = st.tabs(["📂 Nahrát z Galerie", "📷 Vyfotit rovnou"])
+    
+    with tab_galerie:
+        # Přidány všechny možné mobilní formáty fotek + key, aby si to aplikace pamatovala
+        uploaded_files = st.file_uploader("Vyber fotky (jídlo + tabulka s hodnotami)", accept_multiple_files=True, type=['jpg','png','jpeg','webp','heic','heif'], key="file_up_galerie")
         
-    images = []
-    if img_food:
-        st.image(img_food, width=150)
-        images.append(Image.open(img_food))
-    if img_table:
-        st.image(img_table, width=150)
-        images.append(Image.open(img_table))
-        
-    if images:
-        e_info = st.text_input("Doplňující info (např. 'je to 200g', 'vypil jsem k tomu mléko'):", key="e_cam")
-        if st.button("🚀 Analyzovat FOTO", type="primary"):
-            with st.spinner("AI analyzuje fotky a tabulku..."):
-                try:
-                    prompt = f"Analyzuj jídlo na fotkách. Pokud je jedna z fotek nutriční tabulka, řiď se primárně podle ní! Zohledni info od uživatele: '{e_info}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
-                    request_content = [prompt] + images 
-                    res = model.generate_content(request_content)
-                    d = clean_json(res.text)
-                    
-                    rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
-                    df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
-                except Exception as e: st.error(f"CHYBA: {e}")
+        if uploaded_files:
+            images = []
+            c_imgs = st.columns(len(uploaded_files[:2])) 
+            for i, f in enumerate(uploaded_files[:2]):
+                img = Image.open(f)
+                c_imgs[i].image(img, width=150)
+                images.append(img)
+                
+            e_info1 = st.text_input("Doplňující info k fotkám:", key="e_cam1")
+            if st.button("🚀 Analyzovat FOTO z Galerie", type="primary", key="btn_galerie"):
+                with st.spinner("AI analyzuje..."):
+                    try:
+                        prompt = f"Analyzuj jídlo na fotkách. Pokud je jedna z fotek nutriční tabulka, řiď se primárně podle ní! Zohledni info od uživatele: '{e_info1}'. Vrať striktně čistý JSON: {{\"nazev\": \"Nazev\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
+                        res = model.generate_content([prompt] + images)
+                        d = clean_json(res.text)
+                        
+                        rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                        df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
+                    except Exception as e: st.error(f"CHYBA: {e}")
 
-    with st.expander("✍️ Nebo zapsat pouze textem"):
+    with tab_kamera:
+        cam_in = st.camera_input("Rychlá fotka", key="cam_direct")
+        if cam_in:
+            st.image(cam_in, width=150)
+            e_info2 = st.text_input("Doplňující info:", key="e_cam2")
+            if st.button("🚀 Analyzovat FOTO", type="primary", key="btn_kamera"):
+                with st.spinner("AI analyzuje..."):
+                    try:
+                        prompt = f"Analyzuj jídlo. Info: '{e_info2}'. Čistý JSON: {{\"nazev\": \"N\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}"
+                        res = model.generate_content([prompt, Image.open(cam_in)])
+                        d = clean_json(res.text)
+                        
+                        rec = pd.DataFrame([{"Datum": today, "Čas": datetime.datetime.now().strftime("%H:%M"), "Kategorie": get_meal_category(), "Jídlo": d['nazev'], "Kalorie": d['kalorie'], "Bílkoviny": d['bilkoviny'], "Sacharidy": d['sacharidy'], "Tuky": d['tuky']}])
+                        df_food = pd.concat([df_food, rec], ignore_index=True); save_csv(df_food, files["food"]); st.rerun()
+                    except Exception as e: st.error(f"CHYBA: {e}")
+
+    with st.expander("✍️ Zapsat pouze textem"):
         txt = st.text_input("Co jsi jedl?")
-        if st.button("Zapsat text"):
+        if st.button("Zapsat text", key="btn_text"):
             with st.spinner("AI počítá..."):
                 try:
                     d = clean_json(model.generate_content(f"Analyzuj: '{txt}'. Čistý JSON: {{\"nazev\": \"N\", \"kalorie\": 0, \"bilkoviny\": 0, \"sacharidy\": 0, \"tuky\": 0}}").text)
